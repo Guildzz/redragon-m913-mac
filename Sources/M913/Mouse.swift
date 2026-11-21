@@ -35,9 +35,15 @@ final class Mouse: ObservableObject {
     private var ultimoSinal = Date.distantPast
 
     private let gerente: IOHIDManager
-    private var canal: IOHIDDevice?
-    private var temCabo = false
+    // Dois canais: o receptor sem fio e o cabo. Com o cabo ligado, o mouse só atende
+    // leitura e gravação por ele; a bateria vem melhor pelo receptor.
+    private var receptor: IOHIDDevice?
+    private var cabo: IOHIDDevice?
+    private var canal: IOHIDDevice? { cabo ?? receptor }
+    private var canalBateria: IOHIDDevice? { receptor ?? cabo }
+    private var temCabo: Bool { cabo != nil }
     private let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
+    private let bufferCabo = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
     private var esperas: [(id: UUID, sub: UInt8, endereco: Int?, continua: CheckedContinuation<[UInt8]?, Never>)] = []
     private var relogio: Timer?
     private var avisouBaixa = false
@@ -77,13 +83,16 @@ final class Mouse: ObservableObject {
         NotificationCenter.default.addObserver(forName: Notification.Name("M913.reabriu"), object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.mostrarSempre = true }
         }
+        // App de barra do topo sem janela: o macOS não pode encerrar por estar "ocioso".
+        ProcessInfo.processInfo.disableAutomaticTermination("Acompanha a bateria do mouse")
+        ProcessInfo.processInfo.disableSuddenTermination()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     // MARK: Conexão
 
     func procura() {
-        guard canal == nil, let todos = IOHIDManagerCopyDevices(gerente) as? Set<IOHIDDevice> else { return }
+        guard receptor == nil || cabo == nil, let todos = IOHIDManagerCopyDevices(gerente) as? Set<IOHIDDevice> else { return }
         for d in todos { chegou(d) }
     }
 
@@ -102,61 +111,62 @@ final class Mouse: ObservableObject {
         let produto = propriedade(d, kIOHIDProductIDKey)
         depura("chegou \(String(format: "%04x", produto)) feature=\(propriedade(d, kIOHIDMaxFeatureReportSizeKey))")
         guard propriedade(d, kIOHIDMaxFeatureReportSizeKey) >= 17 else { return }
-        if produto == M913.produtoCabo {
-            temCabo = true
-            if canal == nil { abre(d, conexao: .cabo) }
+        if produto == M913.produtoCabo, cabo == nil, abre(d) {
+            cabo = d
             marcaLigado()
+        } else if produto == M913.produtoSemFio, receptor == nil, abre(d) {
+            receptor = d
+        } else {
             return
         }
-        guard produto == M913.produtoSemFio else { return }
-        // Com cabo e receptor juntos, usa o receptor: a leitura da bateria é a mesma de quando está sem cabo.
-        if let c = canal, conexao == .cabo {
-            IOHIDDeviceClose(c, IOOptionBits(kIOHIDOptionsTypeNone))
-            canal = nil
+        atualizaConexao()
+        Task {
+            await atualizaBateria()
+            await leConfig()
+            // O outro canal pode chegar logo depois e ser o único que atende a leitura.
+            if config == nil {
+                try? await Task.sleep(for: .seconds(2))
+                await leConfig()
+            }
         }
-        guard canal == nil else { return }
-        abre(d, conexao: .semFio)
     }
 
-    private func abre(_ d: IOHIDDevice, conexao nova: Conexao) {
+    private func atualizaConexao() {
+        conexao = cabo != nil ? .cabo : (receptor != nil ? .semFio : .desconectado)
+    }
+
+    private func abre(_ d: IOHIDDevice) -> Bool {
         let r = IOHIDDeviceOpen(d, IOOptionBits(kIOHIDOptionsTypeNone))
         depura("abrir: \(String(format: "0x%08x", r)) acesso=\(IOHIDCheckAccess(kIOHIDRequestTypeListenEvent).rawValue)")
         guard r == kIOReturnSuccess else {
             semPermissao = true
-            return
+            return false
         }
         semPermissao = false
-        canal = d
-        conexao = nova
         let eu = Unmanaged.passUnretained(self).toOpaque()
-        IOHIDDeviceRegisterInputReportCallback(d, buffer, 64, { ctx, _, _, _, id, relatorio, tamanho in
+        IOHIDDeviceRegisterInputReportCallback(d, buffer(for: d), 64, { ctx, _, _, _, id, relatorio, tamanho in
             let m = Unmanaged<Mouse>.fromOpaque(ctx!).takeUnretainedValue()
             let bytes = Array(UnsafeBufferPointer(start: relatorio, count: tamanho))
             MainActor.assumeIsolated { m.recebeu(id: UInt8(truncatingIfNeeded: id), bytes) }
         }, eu)
         IOHIDDeviceScheduleWithRunLoop(d, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-        Task {
-            await atualizaBateria()
-            await leConfig()
-        }
+        return true
+    }
+
+    private func buffer(for d: IOHIDDevice) -> UnsafeMutablePointer<UInt8> {
+        propriedade(d, kIOHIDProductIDKey) == M913.produtoCabo ? bufferCabo : buffer
     }
 
     private func saiu(_ d: IOHIDDevice) {
-        let produto = propriedade(d, kIOHIDProductIDKey)
-        if produto == M913.produtoCabo {
-            temCabo = false
-        }
-        guard let c = canal, CFEqual(c, d) else { return }
-        canal = nil
-        conexao = .desconectado
-        ligado = false
-        informaSistema()
+        if let c = cabo, CFEqual(c, d) { cabo = nil }
+        else if let r = receptor, CFEqual(r, d) { receptor = nil }
+        else { return }
+        atualizaConexao()
         for e in esperas { e.continua.resume(returning: nil) }
         esperas.removeAll()
-        // O receptor pode continuar ligado enquanto o cabo sai: procura de novo.
-        if let todos = IOHIDManagerCopyDevices(gerente) as? Set<IOHIDDevice> {
-            for outro in todos where !CFEqual(outro, d) { chegou(outro) }
-        }
+        if conexao == .desconectado { ligado = false }
+        informaSistema()
+        if conexao != .desconectado { Task { await atualizaBateria() } }
     }
 
     // MARK: Pedido e resposta
@@ -174,8 +184,7 @@ final class Mouse: ObservableObject {
         }
     }
 
-    private func envia(_ p: Pacote) -> Bool {
-        guard let d = canal else { return false }
+    private func envia(_ p: Pacote, por d: IOHIDDevice) -> Bool {
         depura("envia \(hex(p))")
         let r = p.withUnsafeBufferPointer {
             IOHIDDeviceSetReport(d, kIOHIDReportTypeFeature, CFIndex(M913.relatorioPedido), $0.baseAddress!, p.count)
@@ -185,15 +194,15 @@ final class Mouse: ObservableObject {
 
     /// Manda o pacote e espera a resposta do mouse. Mouse parado demora a responder,
     /// então tenta algumas vezes.
-    private func pede(_ p: Pacote, tentativas: Int = 4, espera: Double = 0.35) async -> [UInt8]? {
+    private func pede(_ p: Pacote, tentativas: Int = 4, espera: Double = 0.35, bateria: Bool = false) async -> [UInt8]? {
         let sub = p[1]
         let endereco = sub == M913.subConfirma ? nil : (Int(p[3]) << 8) | Int(p[4])
         for _ in 0..<tentativas {
-            guard canal != nil else { return nil }
+            guard let d = bateria ? canalBateria : canal else { return nil }
             let id = UUID()
             let resposta: [UInt8]? = await withCheckedContinuation { c in
                 esperas.append((id, sub, endereco, c))
-                if !envia(p) {
+                if !envia(p, por: d) {
                     if let i = esperas.firstIndex(where: { $0.id == id }) { esperas.remove(at: i).continua.resume(returning: nil) }
                     return
                 }
@@ -213,7 +222,7 @@ final class Mouse: ObservableObject {
 
     func atualizaBateria() async {
         guard canal != nil, !gravando else { return }
-        if let r = await pede(Monta.bateria, tentativas: 3) {
+        if let r = await pede(Monta.bateria, tentativas: 3, bateria: true) {
             registraBateria(r)
             marcaLigado()
         } else if conexao != .cabo {

@@ -19,13 +19,12 @@ struct M913App: App {
 
     private var visivel: Binding<Bool> {
         Binding(get: { mouse.ligado || mouse.semPermissao || mouse.mostrarSempre },
-                set: { if !$0 { mouse.mostrarSempre = false } })
+                set: { _ in })
     }
 
     var body: some Scene {
         MenuBarExtra(isInserted: visivel) {
             MenuBateria().environmentObject(mouse)
-                .onDisappear { if !mouse.ligado { mouse.mostrarSempre = false } }
         } label: {
             RotuloBarra(conexao: mouse.conexao, bateria: mouse.bateria, carregando: mouse.carregando)
         }
