@@ -6,6 +6,10 @@ extension Notification.Name {
 }
 
 final class Delegado: NSObject, NSApplicationDelegate {
+    /// Com o mouse parado o ícone da barra ainda não aparece; sem nenhuma janela, o macOS
+    /// encerrava o app achando que a última janela tinha fechado.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         NotificationCenter.default.post(name: .reabriuApp, object: nil)
         return true
