@@ -14,7 +14,7 @@ private func IOPSReleasePowerSource(_ fonte: OpaquePointer) -> Int32
 final class BateriaSistema {
     private var fonte: OpaquePointer?
 
-    func publica(nivel: Int, carregando: Bool, cabo: Bool) {
+    func publica(nivel: Int, carregando: Bool, cabo: Bool, restante: TimeInterval? = nil) {
         if fonte == nil {
             var f: OpaquePointer?
             guard IOPSCreatePowerSource(&f) == 0, let f else { return }
@@ -29,6 +29,7 @@ final class BateriaSistema {
             kIOPSMaxCapacityKey: 100,
             kIOPSIsChargingKey: carregando,
             kIOPSIsPresentKey: true,
+            kIOPSTimeToEmptyKey: restante.map { Int($0 / 60) } ?? -1,
             "Accessory Category": "Mouse",
         ]
         if let fonte { _ = IOPSSetPowerSourceDetails(fonte, detalhes as CFDictionary) }

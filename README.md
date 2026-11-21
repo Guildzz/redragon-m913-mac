@@ -9,6 +9,7 @@ App nativo para macOS que configura o mouse **Redragon M913 Impact Elite** (sem 
 ## O que faz
 
 - **Bateria na barra do topo**, com o logo da Redragon, a porcentagem e um raio quando está carregando.
+- **Tempo restante estimado.** O mouse só informa a bateria de 10 em 10%, então o app mede quanto tempo de uso leva cada queda de 10% e mostra "cerca de X h restantes".
 - **Bateria no widget de Baterias do macOS**, ao lado do Magic Mouse e do teclado.
 - **Avisos**: bateria baixa (20%), começou a carregar e carregou.
 - **Ícone só com o mouse ligado**: desligou o mouse, o ícone some. Abrir o app de novo pelo Finder mostra o ícone mesmo assim.
@@ -19,11 +20,12 @@ App nativo para macOS que configura o mouse **Redragon M913 Impact Elite** (sem 
   - DPI (aumentar, diminuir, ciclo, mira);
   - clique duplo ou triplo;
   - tiro rápido.
+- **⌘ ⌥ ⌃ ⇧ do teclado + botão do mouse**: segure um modificador no teclado e aperte uma lateral, e sai a combinação (⌘F1, ⌃F1…). Sem segurar nada, sai só a tecla. Pelo receptor sem fio o macOS não junta os dois sozinho; o app faz isso com a permissão de Acessibilidade.
 - **DPI**: 5 níveis de 100 a 16000 e quantos ficam em uso.
-- **Luz do logo**: desligada, fixa (cor e brilho), respiração ou arco-íris.
+- **Luz do logo**: desligada, fixa (cor e brilho), respiração ou arco-íris, com cores prontas ou uma personalizada.
 - **Taxa de resposta**: 125, 250, 500 ou 1000 Hz.
 
-Tudo é gravado na memória do próprio mouse, então vale em qualquer computador, mesmo sem o app aberto. Antes de mudar qualquer coisa, o app guarda uma cópia da configuração em `~/Library/Application Support/M913/`.
+Cada mudança é gravada sozinha na memória do próprio mouse, logo depois de feita, e o **Desfazer** volta a anterior. Vale em qualquer computador, mesmo sem o app aberto. Antes de mudar qualquer coisa, o app guarda uma cópia da configuração em `~/Library/Application Support/M913/`.
 
 ## Instalar
 
@@ -37,6 +39,7 @@ Tudo é gravado na memória do próprio mouse, então vale em qualquer computado
    ```
 4. Libere em **Ajustes do Sistema > Privacidade e Segurança > Monitoramento de Entrada**. O receptor do mouse se apresenta como teclado, por isso o macOS pede essa permissão. O app conecta sozinho depois disso.
 5. No menu do ícone, marque **Abrir ao ligar o Mac**.
+6. Opcional: para usar ⌘ ⌥ ⌃ ⇧ do teclado com os botões do mouse, abra a aba **Botões** e libere o app em **Ajustes do Sistema > Privacidade e Segurança > Acessibilidade**.
 
 Requer macOS 14 ou mais novo. Funciona em Mac com Apple Silicon e com Intel.
 
@@ -72,15 +75,16 @@ Licença **GPL-3.0**, a mesma dos projetos de origem.
 
 Native macOS menu bar app for the **Redragon M913 Impact Elite** wireless mouse. Redragon's official software is Windows-only. This app is unofficial and not affiliated with Redragon.
 
-- **Battery level in the menu bar** with a charging indicator.
+- **Battery level in the menu bar** with a charging indicator and an estimated time remaining.
 - **Battery in the macOS Batteries widget.**
 - **Notifications** for low battery and charging.
 - **Remapping of all 16 buttons**: keyboard shortcuts, media, browser, DPI, double click and rapid fire.
+- **Keyboard modifiers + mouse keys**: hold ⌘ ⌥ ⌃ ⇧ on the keyboard and press a side button to send the combination (needs the Accessibility permission).
 - **5 DPI stages.**
 - **Logo LED effects.**
 - **Polling rate** of 125 to 1000 Hz.
 
-Everything is saved to the mouse's onboard memory.
+Changes are saved to the mouse's onboard memory automatically.
 
 **Install:**
 1. Download the zip from Releases and move the app to Applications.

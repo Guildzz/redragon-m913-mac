@@ -3,8 +3,10 @@ import IOKit.hid
 import UserNotifications
 import AppKit
 
+let depurando = ProcessInfo.processInfo.environment["M913_DEBUG"] != nil
+
 func depura(_ s: String) {
-    if ProcessInfo.processInfo.environment["M913_DEBUG"] != nil { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
+    if depurando { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
 }
 
 enum Conexao: Equatable {
@@ -20,8 +22,17 @@ final class Mouse: ObservableObject {
     @Published private(set) var bateria: Int?            // 0...100, de 10 em 10
     @Published private(set) var carregando = false
     @Published private(set) var atualizadoEm: Date?
+    /// Tempo de uso que ainda resta, em segundos (estimado; nil enquanto aprende).
+    @Published private(set) var restante: TimeInterval?
+    private var estimativa = EstimativaBateria()
     @Published private(set) var config: ConfigMouse?     // o que está gravado no mouse
-    @Published var rascunho = ConfigMouse()              // o que está sendo editado
+    /// O que está sendo editado. Cada mudança vai sozinha para o mouse, logo depois.
+    @Published var rascunho = ConfigMouse() { didSet { if rascunho != oldValue { agendaGravacao() } } }
+    /// Como o mouse estava antes da última gravação, para o Desfazer.
+    @Published private(set) var anterior: ConfigMouse?
+    /// Há mudança esperando a pausa para ser gravada.
+    @Published private(set) var aguardando = false
+    private var gravacaoAgendada: Task<Void, Never>?
     @Published private(set) var lendo = false
     @Published private(set) var gravando = false
     @Published var aviso: String?
@@ -65,7 +76,14 @@ final class Mouse: ObservableObject {
         // Movimento ou clique do Red Dragon = mouse ligado. Sem ficar perguntando.
         IOHIDManagerRegisterInputValueCallback(gerente, { ctx, _, remetente, valor in
             let m = Unmanaged<Mouse>.fromOpaque(ctx!).takeUnretainedValue()
-            let pagina = IOHIDElementGetUsagePage(IOHIDValueGetElement(valor))
+            let elemento = IOHIDValueGetElement(valor)
+            let pagina = IOHIDElementGetUsagePage(elemento)
+            if depurando, pagina != 0x01 {
+                let uso = IOHIDElementGetUsage(elemento)
+                if uso < 0xff00 && uso != 0xffffffff {
+                    depura("entrada pagina=\(String(format: "%02x", pagina)) uso=\(String(format: "%02x", uso)) valor=\(IOHIDValueGetIntegerValue(valor))")
+                }
+            }
             guard pagina == 0x01 || pagina == 0x09 else { return }
             MainActor.assumeIsolated { m.sinalDeVida() }
         }, eu)
@@ -109,8 +127,10 @@ final class Mouse: ObservableObject {
 
     private func chegou(_ d: IOHIDDevice) {
         let produto = propriedade(d, kIOHIDProductIDKey)
-        depura("chegou \(String(format: "%04x", produto)) feature=\(propriedade(d, kIOHIDMaxFeatureReportSizeKey))")
         guard propriedade(d, kIOHIDMaxFeatureReportSizeKey) >= 17 else { return }
+        if let r = receptor, CFEqual(r, d) { return }
+        if let c = cabo, CFEqual(c, d) { return }
+        depura("chegou \(String(format: "%04x", produto))")
         if produto == M913.produtoCabo, cabo == nil, abre(d) {
             cabo = d
             marcaLigado()
@@ -255,13 +275,14 @@ final class Mouse: ObservableObject {
         guard r.count > 6, r[1] == M913.subConfirma, r[2] == 0x00 else { return }
         let bruto = Int(r[6])
         let pct = bruto <= 10 ? bruto * 10 : min(bruto, 100)
-        let anterior = bateria
         bateria = pct
         atualizadoEm = Date()
         defer { informaSistema() }
 
         // O byte seguinte ao nível diz se está carregando (1) ou não (0).
         marcaCarregando(r.count > 7 && r[7] == 0x01)
+        estimativa.registra(nivel: pct, carregando: carregando)
+        restante = carregando ? nil : estimativa.restante(nivel: pct)
 
         if pct <= 20 && !carregando && !avisouBaixa {
             avisouBaixa = true
@@ -272,7 +293,7 @@ final class Mouse: ObservableObject {
 
     private func informaSistema() {
         if ligado || conexao == .cabo, let b = bateria {
-            sistema.publica(nivel: b, carregando: carregando, cabo: conexao == .cabo)
+            sistema.publica(nivel: b, carregando: carregando, cabo: conexao == .cabo, restante: restante)
         } else {
             sistema.remove()
         }
@@ -342,7 +363,23 @@ final class Mouse: ObservableObject {
         return l
     }
 
-    func desfaz() { if let c = config { rascunho = c } }
+    func desfaz() {
+        guard let a = anterior, !gravando else { return }
+        anterior = nil
+        rascunho = a
+    }
+
+    /// Espera uma pausa curta (o fim de um arraste, por exemplo) e grava.
+    private func agendaGravacao() {
+        gravacaoAgendada?.cancel()
+        guard let c = config, rascunho != c else { aguardando = false; return }
+        aguardando = true
+        gravacaoAgendada = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            await grava()
+        }
+    }
 
     func voltaFabrica() {
         var f = rascunho
@@ -358,8 +395,10 @@ final class Mouse: ObservableObject {
 
     func grava() async {
         guard let c = config, canal != nil, !gravando else { return }
+        aguardando = false
         gravando = true
         defer { gravando = false }
+        let alvo = rascunho
         var pacotes: [Pacote] = []
         let alterados = botoesAlterados
         if !alterados.isEmpty { pacotes += Monta.botoes(rascunho, alterados: alterados) }
@@ -372,7 +411,7 @@ final class Mouse: ObservableObject {
 
         for p in pacotes {
             guard await pede(p, tentativas: 6) != nil else {
-                aviso = "O mouse parou de responder no meio da gravação. Mexa nele e grave de novo."
+                aviso = "O mouse não respondeu e a mudança não foi gravada. Mexa nele e tente de novo."
                 return
             }
         }
@@ -382,10 +421,18 @@ final class Mouse: ObservableObject {
         try? await Task.sleep(for: .milliseconds(150))
 
         gravando = false
+        anterior = c
+        // Mudanças feitas enquanto gravava não podem se perder na leitura de volta.
+        let editado = rascunho
         await leConfig()
-        if let novo = config, novo.acoes != rascunho.acoes && !alterados.isEmpty {
-            aviso = "Gravei, mas a leitura de volta veio diferente em algum botão. Confira a lista."
+        if let novo = config {
+            if novo.acoes != alvo.acoes && !alterados.isEmpty {
+                aviso = "Gravei, mas a leitura de volta veio diferente em algum botão. Confira a lista."
+            } else if novo.estagios != alvo.estagios || novo.dpi != alvo.dpi {
+                aviso = "Gravei, mas a leitura de volta veio diferente no DPI."
+            }
         }
+        if editado != alvo { rascunho = editado }
     }
 }
 

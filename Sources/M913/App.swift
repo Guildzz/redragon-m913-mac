@@ -16,6 +16,7 @@ final class Delegado: NSObject, NSApplicationDelegate {
 struct M913App: App {
     @NSApplicationDelegateAdaptor(Delegado.self) private var delegado
     @StateObject private var mouse = Mouse()
+    @StateObject private var juntaModificadores = JuntaModificadores()
 
     private var visivel: Binding<Bool> {
         Binding(get: { mouse.ligado || mouse.semPermissao || mouse.mostrarSempre },
@@ -33,6 +34,7 @@ struct M913App: App {
         Window("Red Dragon M913", id: "config") {
             JanelaConfig()
                 .environmentObject(mouse)
+                .environmentObject(juntaModificadores)
                 .frame(minWidth: 760, minHeight: 560)
         }
         .windowResizability(.contentMinSize)
@@ -178,9 +180,21 @@ struct PainelBateria: View {
             }
             if let b = mouse.bateria {
                 BarraBateria(nivel: b, carregando: mouse.carregando)
+                if !mouse.carregando && mouse.conexao != .cabo {
+                    if let r = mouse.restante {
+                        Text(EstimativaBateria.texto(r))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if b > 0 {
+                        Text("Aprendendo quanto a bateria dura")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .help("O mouse só informa de 10 em 10%. O tempo restante aparece depois que o app medir uma queda inteira de 10%.")
+                    }
+                }
             }
             if let quando = mouse.atualizadoEm {
-                Text("Atualizado \(quando.formatted(.relative(presentation: .named)))")
+                Text("Atualizado \(quando.formatted(.relative(presentation: .named).locale(Locale(identifier: "pt_BR"))))")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

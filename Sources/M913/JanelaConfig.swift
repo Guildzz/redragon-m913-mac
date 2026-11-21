@@ -69,26 +69,28 @@ struct JanelaConfig: View {
 struct BarraGravar: View {
     @EnvironmentObject var mouse: Mouse
 
+    @State private var confirmaFabrica = false
+
     var body: some View {
-        let mudancas = mouse.alteracoes
+        let pendente = !mouse.alteracoes.isEmpty
         HStack(spacing: 12) {
-            if mouse.gravando {
+            if mouse.gravando || (mouse.aguardando && mouse.aviso == nil) {
                 ProgressView().controlSize(.small)
                 Text("Gravando no mouse…").foregroundStyle(.secondary)
             } else if let a = mouse.aviso {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 Text(a).foregroundStyle(.secondary).lineLimit(2)
-            } else if mudancas.isEmpty {
-                Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
-                Text("Tudo igual ao que está gravado no mouse").foregroundStyle(.secondary)
+                if pendente {
+                    Button("Tentar de novo") { Task { await mouse.grava() } }
+                }
             } else {
-                Circle().fill(.orange).frame(width: 7, height: 7)
-                Text("Alterado: " + mudancas.joined(separator: ", "))
+                Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
+                Text("Gravado no mouse. As mudanças são gravadas sozinhas.").foregroundStyle(.secondary)
             }
             Spacer()
             Menu {
                 Button("Ler de novo do mouse") { Task { await mouse.leConfig() } }
-                Button("Voltar ao padrão de fábrica") { mouse.voltaFabrica() }
+                Button("Voltar ao padrão de fábrica…") { confirmaFabrica = true }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -96,11 +98,14 @@ struct BarraGravar: View {
             .fixedSize()
             .disabled(mouse.gravando)
             Button("Desfazer") { mouse.desfaz() }
-                .disabled(mudancas.isEmpty || mouse.gravando)
-            Button("Gravar no mouse") { Task { await mouse.grava() } }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(mudancas.isEmpty || mouse.gravando)
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(mouse.anterior == nil || mouse.gravando)
+                .help("Volta o mouse para como estava antes da última mudança.")
+        }
+        .confirmationDialog("Voltar o mouse ao padrão de fábrica?", isPresented: $confirmaFabrica) {
+            Button("Voltar ao padrão", role: .destructive) { mouse.voltaFabrica() }
+        } message: {
+            Text("Botões, DPI, luz e taxa de resposta voltam ao original e são gravados no mouse. Dá para desfazer em seguida.")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -110,6 +115,34 @@ struct BarraGravar: View {
 }
 
 // MARK: - Botões
+
+/// Liga o ⌘, ⌥, ⌃ e ⇧ do teclado às teclas que vêm do mouse.
+struct OpcaoModificadores: View {
+    @EnvironmentObject var junta: JuntaModificadores
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: $junta.ligado) {
+                Text("Juntar com o teclado").font(.headline)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            Text("Segure ⌘, ⌥, ⌃ ou ⇧ no teclado e aperte uma lateral: sai a combinação, como ⌘F1. Sem segurar nada, sai só a tecla.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if junta.ligado && !junta.temPermissao {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Falta liberar o app em Acessibilidade.", systemImage: "lock.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                    Button("Abrir Ajustes de Acessibilidade") { junta.pedePermissao() }
+                        .controlSize(.small)
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+}
 
 struct TelaBotoes: View {
     @EnvironmentObject var mouse: Mouse
@@ -137,6 +170,7 @@ struct TelaBotoes: View {
                             }
                         }
                     }
+                    OpcaoModificadores()
                 }
                 .padding(20)
             }
@@ -336,12 +370,17 @@ struct TelaDPI: View {
     var body: some View {
         Form {
             Section {
-                Picker("Níveis em uso", selection: $mouse.rascunho.estagios) {
+                Picker("Quantos níveis usar", selection: $mouse.rascunho.estagios) {
                     ForEach(1...5, id: \.self) { Text("\($0)").tag($0) }
                 }
                 .pickerStyle(.segmented)
+                if mouse.rascunho.estagios == 1 {
+                    Label("Com 1 nível, os botões de DPI do mouse não mudam nada. Escolha 2 ou mais.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                }
             } footer: {
-                Text("O botão de DPI passa só pelos níveis em uso. As luzinhas vermelhas ao lado dele mostram o nível: nenhuma acesa é o 1, quatro acesas é o 5.")
+                Text("Os dois botões atrás da rodinha sobem e descem de nível, só entre os níveis usados. As 4 luzinhas ao lado deles mostram o nível: nenhuma acesa é o 1, as quatro acesas é o 5.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -374,17 +413,6 @@ struct TelaDPI: View {
 struct TelaLuz: View {
     @EnvironmentObject var mouse: Mouse
 
-    private var cor: Binding<Color> {
-        Binding(
-            get: { let c = mouse.rascunho.cor; return Color(red: Double(c.r) / 255, green: Double(c.g) / 255, blue: Double(c.b) / 255) },
-            set: { nova in
-                guard let rgb = NSColor(nova).usingColorSpace(.sRGB) else { return }
-                mouse.rascunho.cor = CorRGB(r: UInt8(max(0, min(255, rgb.redComponent * 255))),
-                                            g: UInt8(max(0, min(255, rgb.greenComponent * 255))),
-                                            b: UInt8(max(0, min(255, rgb.blueComponent * 255))))
-            })
-    }
-
     var body: some View {
         Form {
             Section {
@@ -399,7 +427,7 @@ struct TelaLuz: View {
 
             if mouse.rascunho.luz == .fixa || mouse.rascunho.luz == .respiracao {
                 Section {
-                    ColorPicker("Cor", selection: cor, supportsOpacity: false)
+                    SeletorCor(cor: $mouse.rascunho.cor)
                     if mouse.rascunho.luz == .fixa {
                         LabeledContent("Brilho") {
                             Slider(value: Binding(get: { Double(mouse.rascunho.brilho) }, set: { mouse.rascunho.brilho = Int($0) }), in: 0...255)
@@ -450,4 +478,190 @@ struct TelaDesempenho: View {
         }
         .formStyle(.grouped)
     }
+}
+
+// MARK: - Seletor de cor
+
+/// Seletor de cor da luz do logo: cores prontas e, se quiser, uma personalizada (matiz e intensidade).
+struct SeletorCor: View {
+    @Binding var cor: CorRGB
+    @State private var editando = false
+    @State private var matiz: Double = 0
+    @State private var saturacao: Double = 1
+
+    /// Valores pensados para o LED: o laranja e o amarelo levam menos verde, senão puxam para o verde-limão.
+    static let prontas: [(nome: String, cor: CorRGB)] = [
+        ("Vermelho", CorRGB(r: 255, g: 0, b: 0)),
+        ("Laranja", CorRGB(r: 255, g: 64, b: 0)),
+        ("Amarelo", CorRGB(r: 255, g: 180, b: 0)),
+        ("Verde", CorRGB(r: 0, g: 255, b: 0)),
+        ("Ciano", CorRGB(r: 0, g: 255, b: 255)),
+        ("Azul", CorRGB(r: 0, g: 0, b: 255)),
+        ("Roxo", CorRGB(r: 128, g: 0, b: 255)),
+        ("Rosa", CorRGB(r: 255, g: 0, b: 160)),
+        ("Branco", CorRGB(r: 255, g: 255, b: 255)),
+    ]
+
+    private var ehPronta: Bool { Self.prontas.contains { $0.cor == cor } }
+    private var personalizadaAtiva: Bool { editando || !ehPronta }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center) {
+                Text("Cor")
+                Spacer(minLength: 16)
+                HStack(spacing: 8) {
+                    ForEach(Self.prontas, id: \.nome) { p in
+                        Amostra(cor: p.cor.color, selecionada: p.cor == cor && !editando) {
+                            cor = p.cor
+                            editando = false
+                        }
+                        .help(p.nome)
+                        .accessibilityLabel(p.nome)
+                    }
+                    Divider().frame(height: 18).padding(.horizontal, 2)
+                    Amostra(cor: ehPronta ? nil : cor.color, selecionada: personalizadaAtiva) {
+                        sincroniza()
+                        editando.toggle()
+                    }
+                    .help("Personalizada")
+                    .accessibilityLabel("Cor personalizada")
+                }
+            }
+
+            if personalizadaAtiva {
+                VStack(alignment: .leading, spacing: 12) {
+                    LinhaBarra(titulo: "Tom", valor: $matiz, cores: (0...12).map { Color(hue: Double($0) / 12, saturation: 1, brightness: 1) },
+                               corPino: Color(hue: matiz, saturation: 1, brightness: 1))
+                    LinhaBarra(titulo: "Intensidade", valor: $saturacao,
+                               cores: [.white, Color(hue: matiz, saturation: 1, brightness: 1)],
+                               corPino: cor.color)
+                    HStack {
+                        Text("Código").foregroundStyle(.secondary)
+                        Spacer()
+                        CampoHex(cor: $cor)
+                    }
+                }
+                .padding(.leading, 2)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: personalizadaAtiva)
+        .onAppear(perform: sincroniza)
+        .onChange(of: matiz) { aplica() }
+        .onChange(of: saturacao) { aplica() }
+    }
+
+    /// Lê o tom e a intensidade da cor atual. No branco (sem tom) mantém o tom que já estava.
+    private func sincroniza() {
+        let n = NSColor(srgbRed: CGFloat(cor.r) / 255, green: CGFloat(cor.g) / 255, blue: CGFloat(cor.b) / 255, alpha: 1)
+        if n.saturationComponent > 0.01 { matiz = n.hueComponent }
+        saturacao = n.saturationComponent
+    }
+
+    private func aplica() {
+        let n = NSColor(hue: matiz, saturation: saturacao, brightness: 1, alpha: 1).usingColorSpace(.sRGB) ?? .red
+        let nova = CorRGB(r: UInt8((n.redComponent * 255).rounded()), g: UInt8((n.greenComponent * 255).rounded()),
+                          b: UInt8((n.blueComponent * 255).rounded()))
+        if nova != cor { cor = nova }
+    }
+}
+
+/// Bolinha de cor clicável. Sem cor, mostra o arco-íris da opção personalizada.
+private struct Amostra: View {
+    let cor: Color?
+    let selecionada: Bool
+    let acao: () -> Void
+
+    var body: some View {
+        Button(action: acao) {
+            ZStack {
+                if let cor {
+                    Circle().fill(cor)
+                } else {
+                    Circle().fill(AngularGradient(colors: (0...6).map { Color(hue: Double($0) / 6, saturation: 0.85, brightness: 1) }, center: .center))
+                }
+                Circle().strokeBorder(.primary.opacity(0.18), lineWidth: 0.5)
+            }
+            .frame(width: 20, height: 20)
+            .padding(3)
+            .overlay(Circle().strokeBorder(selecionada ? Color.accentColor : .clear, lineWidth: 2))
+            .contentShape(Circle())
+        }
+        .buttonStyle(Pressionavel())
+        .accessibilityAddTraits(selecionada ? .isSelected : [])
+    }
+}
+
+/// Barra com degradê e um pino arrastável, de 0 a 1.
+private struct LinhaBarra: View {
+    let titulo: String
+    @Binding var valor: Double
+    let cores: [Color]
+    let corPino: Color
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(titulo).foregroundStyle(.secondary).frame(width: 84, alignment: .leading)
+            GeometryReader { g in
+                let largura = g.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(LinearGradient(colors: cores, startPoint: .leading, endPoint: .trailing))
+                        .overlay(Capsule().strokeBorder(.primary.opacity(0.15), lineWidth: 0.5))
+                        .frame(height: 10)
+                    Circle()
+                        .fill(corPino)
+                        .overlay(Circle().strokeBorder(.white, lineWidth: 2.5))
+                        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                        .frame(width: 18, height: 18)
+                        .offset(x: (largura - 18) * valor)
+                }
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { v in
+                    valor = min(1, max(0, (v.location.x - 9) / max(1, largura - 18)))
+                })
+            }
+            .frame(height: 20)
+            .frame(maxWidth: 320)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(titulo)
+        .accessibilityValue("\(Int(valor * 100))%")
+        .accessibilityAdjustableAction { d in
+            valor = min(1, max(0, valor + (d == .increment ? 0.05 : -0.05)))
+        }
+    }
+}
+
+/// Campo do código da cor (#RRGGBB). Só aplica quando o código é válido.
+private struct CampoHex: View {
+    @Binding var cor: CorRGB
+    @State private var texto = ""
+    @FocusState private var focado: Bool
+
+    var body: some View {
+        TextField("", text: $texto)
+            .textFieldStyle(.roundedBorder)
+            .font(.body.monospaced())
+            .frame(width: 92)
+            .focused($focado)
+            .onAppear { texto = cor.hex }
+            .onChange(of: cor) { if !focado { texto = cor.hex } }
+            .onSubmit(aplica)
+            .onChange(of: focado) { if !focado { aplica() } }
+            .accessibilityLabel("Código da cor")
+    }
+
+    private func aplica() {
+        let limpo = texto.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "#", with: "")
+        guard limpo.count == 6, let v = UInt32(limpo, radix: 16) else { texto = cor.hex; return }
+        cor = CorRGB(r: UInt8(v >> 16 & 0xff), g: UInt8(v >> 8 & 0xff), b: UInt8(v & 0xff))
+        texto = cor.hex
+    }
+}
+
+extension CorRGB {
+    var color: Color { Color(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255) }
+    var hex: String { String(format: "#%02X%02X%02X", r, g, b) }
 }
