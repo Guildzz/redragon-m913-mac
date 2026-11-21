@@ -257,11 +257,13 @@ final class Mouse: ObservableObject {
         ultimoSinal = Date()
         let estavaDesligado = !ligado
         marcaLigado()
-        if estavaDesligado {
-            Task {
-                await atualizaBateria()
-                if config == nil { await leConfig() }
-            }
+        if estavaDesligado { Task { await atualizaBateria() } }
+        // Parado, o mouse economiza energia e não responde. Mexeu, o app retoma sozinho
+        // o que tinha ficado pela metade: a leitura ou uma gravação.
+        if config == nil {
+            if !lendo { Task { await leConfig() } }
+        } else if aviso != nil, !gravando, !lendo, let c = config {
+            Task { if rascunho != c { await grava() } else { await leConfig() } }
         }
     }
 
@@ -319,6 +321,32 @@ final class Mouse: ObservableObject {
 
     // MARK: Leitura
 
+    /// Nível de DPI em uso agora (1 a 5). O mouse não avisa quando os botões de DPI trocam
+    /// o nível, então a aba DPI pergunta de tempos em tempos (endereço 0x04, contado do zero).
+    @Published private(set) var nivelAtual: Int?
+
+    func leNivelAtual() async {
+        guard canal != nil, !lendo, !gravando, !aguardando else { return }
+        guard let r = await pede(Monta.le(0x00), tentativas: 2), r.count > 10 else { return }
+        let n = Int(r[6 + 0x04])
+        if n <= 4 { nivelAtual = n + 1 }
+    }
+
+    /// Manda o mouse usar um nível de DPI agora, como se tivesse apertado os botões de DPI.
+    func usaNivel(_ n: Int) async {
+        guard canal != nil, !gravando, !lendo else { return }
+        gravando = true
+        defer { gravando = false }
+        guard await pede(Monta.nivelAtual(n), tentativas: 6) != nil else {
+            aviso = "O mouse não respondeu. Mexa nele e tente de novo."
+            return
+        }
+        _ = await pede(Monta.confirma, tentativas: 2)
+        try? await Task.sleep(for: .milliseconds(150))
+        _ = await pede(Monta.confirma, tentativas: 2)
+        nivelAtual = n
+    }
+
     func leConfig() async {
         guard canal != nil, !lendo, !gravando else { return }
         lendo = true
@@ -326,7 +354,7 @@ final class Mouse: ObservableObject {
         var memoria = [UInt8](repeating: 0, count: 160)
         for bloco in 0..<16 {
             guard let r = await pede(Monta.le(bloco * 10)) else {
-                aviso = "O mouse não respondeu. Mexa nele um pouco e tente de novo."
+                aviso = "Esperando o mouse responder."
                 return
             }
             for j in 0..<10 where 6 + j < r.count { memoria[bloco * 10 + j] = r[6 + j] }
@@ -338,6 +366,7 @@ final class Mouse: ObservableObject {
                 teclados[i] = Array(a[6..<16]) + Array(b[6..<16])
             }
         }
+        if memoria[0x04] <= 4 { nivelAtual = Int(memoria[0x04]) + 1 }
         Copia.guarda(memoria: memoria, teclados: teclados)
         let c = Decodifica.config(memoria: memoria, teclados: teclados)
         config = c
@@ -411,7 +440,7 @@ final class Mouse: ObservableObject {
 
         for p in pacotes {
             guard await pede(p, tentativas: 6) != nil else {
-                aviso = "O mouse não respondeu e a mudança não foi gravada. Mexa nele e tente de novo."
+                aviso = "O mouse não respondeu. Mexa nele e a mudança é gravada sozinha."
                 return
             }
         }

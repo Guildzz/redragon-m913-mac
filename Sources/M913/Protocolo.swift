@@ -431,6 +431,12 @@ enum Monta {
         }
     }
 
+    /// Nível de DPI em uso agora (1 a 5), no endereço 0x04 contado do zero.
+    static func nivelAtual(_ n: Int) -> Pacote {
+        let v = UInt8(max(1, min(5, n)) - 1)
+        return novoPacote(sub: M913.subGrava, endereco: 0x04, tamanho: 2, dados: [v, conferencia([Int(v)])])
+    }
+
     static func taxa(_ hz: Int) -> Pacote {
         let codigo: UInt8 = [1000: 0x01, 500: 0x02, 250: 0x04, 125: 0x08][hz] ?? 0x01
         return novoPacote(sub: M913.subGrava, endereco: 0x00, tamanho: 2, dados: [codigo, conferencia([Int(codigo)])])

@@ -44,8 +44,16 @@ struct JanelaConfig: View {
                             Text("Mexa o mouse se demorar: parado, ele responde devagar.")
                                 .font(.caption).foregroundStyle(.tertiary)
                         } else {
-                            Text(mouse.aviso ?? "Não deu para ler a configuração.").foregroundStyle(.secondary)
-                            Button("Tentar de novo") { Task { await mouse.leConfig() } }
+                            Image(systemName: "computermouse")
+                                .font(.largeTitle)
+                                .foregroundStyle(.secondary)
+                            Text("Esperando o mouse responder").font(.headline)
+                            Text("Parado, o mouse economiza bateria e não responde. Mexa nele e o app continua sozinho.")
+                                .font(.callout).foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 320)
+                            Button("Tentar agora") { Task { await mouse.leConfig() } }
+                                .controlSize(.small)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -367,31 +375,41 @@ struct GravadorAtalho: View {
 struct TelaDPI: View {
     @EnvironmentObject var mouse: Mouse
 
+    private var botoesLigados: Binding<Bool> {
+        Binding(get: { mouse.rascunho.estagios > 1 },
+                set: { mouse.rascunho.estagios = $0 ? 5 : 1 })
+    }
+
     var body: some View {
         Form {
             Section {
-                Picker("Quantos níveis usar", selection: $mouse.rascunho.estagios) {
-                    ForEach(1...5, id: \.self) { Text("\($0)").tag($0) }
-                }
-                .pickerStyle(.segmented)
-                if mouse.rascunho.estagios == 1 {
-                    Label("Com 1 nível, os botões de DPI do mouse não mudam nada. Escolha 2 ou mais.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                }
+                Toggle("Botões de DPI trocam o nível", isOn: botoesLigados)
             } footer: {
-                Text("Os dois botões atrás da rodinha sobem e descem de nível, só entre os níveis usados. As 4 luzinhas ao lado deles mostram o nível: nenhuma acesa é o 1, as quatro acesas é o 5.")
+                Text("Os dois botões embaixo da rodinha: o de cima sobe um nível, o de baixo desce. As 4 luzinhas ao lado deles mostram o nível. Abaixo, o número marcado é o nível em uso; clique em outro número para usá-lo agora.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("Níveis") {
                 ForEach(0..<5, id: \.self) { i in
                     let ativo = i < mouse.rascunho.estagios
+                    let agora = mouse.nivelAtual == i + 1
                     HStack(spacing: 12) {
-                        Text("\(i + 1)")
-                            .font(.headline.monospacedDigit())
-                            .frame(width: 22, height: 22)
-                            .background(ativo ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.1), in: Circle())
+                        Button { Task { await mouse.usaNivel(i + 1) } } label: {
+                            Text("\(i + 1)")
+                                .font(.headline.monospacedDigit())
+                                .foregroundStyle(agora ? Color.white : Color.primary)
+                                .frame(width: 24, height: 24)
+                                .background(agora ? Color.accentColor : Color.secondary.opacity(0.12), in: Circle())
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(Pressionavel())
+                        .disabled(!ativo || mouse.gravando)
+                        .help("Usar o nível \(i + 1) agora")
+                        Text("em uso")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .opacity(agora ? 1 : 0)
+                            .frame(width: 48, alignment: .leading)
                         Slider(value: Binding(
                             get: { Double(TabelaDPI.valores.firstIndex(of: mouse.rascunho.dpi[i]) ?? 0) },
                             set: { mouse.rascunho.dpi[i] = TabelaDPI.valores[Int($0.rounded())] }),
@@ -401,10 +419,20 @@ struct TelaDPI: View {
                             .frame(width: 60, alignment: .trailing)
                     }
                     .opacity(ativo ? 1 : 0.4)
+                    .animation(.easeOut(duration: 0.15), value: agora)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(agora ? .isSelected : [])
                 }
             }
         }
         .formStyle(.grouped)
+        .task {
+            // Acompanha os botões de DPI do mouse enquanto a aba está aberta.
+            while !Task.isCancelled {
+                await mouse.leNivelAtual()
+                try? await Task.sleep(for: .seconds(1.5))
+            }
+        }
     }
 }
 

@@ -21,7 +21,7 @@ App nativo para macOS que configura o mouse **Redragon M913 Impact Elite** (sem 
   - clique duplo ou triplo;
   - tiro rápido.
 - **⌘ ⌥ ⌃ ⇧ do teclado + botão do mouse**: segure um modificador no teclado e aperte uma lateral, e sai a combinação (⌘F1, ⌃F1…). Sem segurar nada, sai só a tecla. Pelo receptor sem fio o macOS não junta os dois sozinho; o app faz isso com a permissão de Acessibilidade.
-- **DPI**: 5 níveis de 100 a 16000 e quantos ficam em uso.
+- **DPI**: 5 níveis de 100 a 16000, liga e desliga os botões de DPI do mouse, mostra o nível em uso e troca de nível com um clique, pelo app ou pelo menu da barra do topo.
 - **Luz do logo**: desligada, fixa (cor e brilho), respiração ou arco-íris, com cores prontas ou uma personalizada.
 - **Taxa de resposta**: 125, 250, 500 ou 1000 Hz.
 
@@ -80,7 +80,7 @@ Native macOS menu bar app for the **Redragon M913 Impact Elite** wireless mouse.
 - **Notifications** for low battery and charging.
 - **Remapping of all 16 buttons**: keyboard shortcuts, media, browser, DPI, double click and rapid fire.
 - **Keyboard modifiers + mouse keys**: hold ⌘ ⌥ ⌃ ⇧ on the keyboard and press a side button to send the combination (needs the Accessibility permission).
-- **5 DPI stages.**
+- **5 DPI stages**, with the current stage shown and switchable from the app or the menu bar.
 - **Logo LED effects.**
 - **Polling rate** of 125 to 1000 Hz.
 

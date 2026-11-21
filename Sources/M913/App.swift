@@ -105,15 +105,28 @@ struct MenuBateria: View {
 
             if let c = mouse.config, mouse.conexao != .desconectado {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("DPI").font(.caption).foregroundStyle(.secondary)
+                    Text("DPI · clique para usar").font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 6) {
                         ForEach(0..<c.estagios, id: \.self) { i in
-                            Text(TextoDPI.curto(c.dpi[i]))
-                                .font(.caption.monospacedDigit())
-                                .padding(.horizontal, 7).padding(.vertical, 3)
-                                .background(.quaternary, in: Capsule())
+                            let agora = mouse.nivelAtual == i + 1
+                            Button { Task { await mouse.usaNivel(i + 1) } } label: {
+                                Text(TextoDPI.curto(c.dpi[i]))
+                                    .font(.caption.monospacedDigit().weight(agora ? .semibold : .regular))
+                                    .foregroundStyle(agora ? Color.white : Color.primary)
+                                    .padding(.horizontal, 7).padding(.vertical, 3)
+                                    .background(agora ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary), in: Capsule())
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(Pressionavel())
+                            .disabled(mouse.gravando)
+                            .help("Usar \(c.dpi[i]) DPI agora")
+                            .accessibilityAddTraits(agora ? .isSelected : [])
                         }
                     }
+                }
+                .task {
+                    // Confere o nível ao abrir o menu: os botões do mouse podem ter mudado.
+                    await mouse.leNivelAtual()
                 }
             }
 
